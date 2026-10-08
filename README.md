@@ -4,7 +4,7 @@ Proyek ini bertujuan untuk membangun sistem monitoring aset perusahaan menggunak
 
 ---
 
-## 📂 Struktur Repositori GitHub (`itlicensehq25/checkmk-cabang`)
+## 📂 Struktur Repositori GitHub (`itlicensehq25/checkmk-HQ`)
 
 ```text
 itlincensehq25/checkmk-cabang/
