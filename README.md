@@ -57,7 +57,7 @@ itlincensehq25/checkmk-cabang/
 
 Jalankan perintah satu baris ini pada terminal server Linux (Ubuntu/Debian/RHEL/Fedora) dengan hak akses **root / sudo**:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itlicensehq25/checkmk-cabang/main/linux/install_server_stack.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/itlicensehq25/checkmk-HQ/main/linux/install_server_stack.sh | sudo bash
 ```
 > **Info Akses Dashboard Server**:
 > * **Dockge Manager**: `http://<IP_SERVER>:5001`
