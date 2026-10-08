@@ -1,0 +1,18 @@
+services:
+  checkmk:
+    image: checkmk/check-mk-community:latest
+    container_name: checkmk-server
+    restart: always
+    ports:
+      - "8080:5000"  # Web GUI Checkmk
+      - "8000:8000"  # Agent Controller TLS Registration
+    environment:
+      - CMK_PASSWORD=cmkadmin
+      - CMK_SITE_ID=cmk
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - checkmk-data:/opt/omd/sites
+
+volumes:
+  checkmk-data:
+    driver: local
