@@ -13,8 +13,8 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 # ---------- Pengaturan ----------
 $LookbackHours = 24
-$WarnDisc      = 1           # jumlah putus -> WARN
-$CritDisc      = 5           # jumlah putus -> CRIT
+$WarnDisc      = 5           # jumlah putus -> WARN
+$CritDisc      = 10           # jumlah putus -> CRIT
 $LogDir        = 'C:\ProgramData\checkmk\agent\log'
 $CsvFile       = Join-Path $LogDir 'network_putus.csv'
 $StateFile     = Join-Path $LogDir 'network_putus_state.txt'
@@ -111,4 +111,4 @@ if ($count -gt 0) {
 } else {
     $text = "Tidak ada putus dalam $LookbackHours jam terakhir"
 }
-Write-Check $state 'Network Disconnect' "disconnects=$count;$WarnDisc;$CritDisc" ($text + $detail)
+Write-Check $state 'info_Network Disconnect' "disconnects=$count;$WarnDisc;$CritDisc" ($text + $detail)
