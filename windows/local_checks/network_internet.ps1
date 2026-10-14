@@ -8,7 +8,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 # ---------- Pengaturan ----------
-$InternetHosts = @('192.168.122.10')   # target ping koneksi keluar (boleh lebih dari satu)
+$InternetHosts = @('192.168.122.10','google.com')   # target ping koneksi keluar (boleh lebih dari satu)
 $PingCount     = 4           # jumlah ping per target
 $WarnLoss      = 25          # % packet loss -> WARN
 $CritLoss      = 50          # % packet loss -> CRIT
