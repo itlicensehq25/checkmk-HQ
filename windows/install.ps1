@@ -195,7 +195,9 @@ $LocalChecks = @(
     "ram_health.ps1",
     "ram_usage.ps1",
     "remote_apps.ps1",
-    "storage_usage.ps1"
+    "storage_usage.ps1",
+    "network_internet.ps1",
+    "network_local.ps1"
 )
 
 Write-Host "[-] Mengunduh 10 script Local Checks dari GitHub..." -ForegroundColor Yellow
