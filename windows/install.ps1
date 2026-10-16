@@ -213,6 +213,44 @@ foreach ($script in $LocalChecks) {
     }
 }
 
+# 7a. Pasang auto-update dari GitHub (Scheduled Task tiap 4 jam + saat PC menyala)
+$UpdaterPath = Join-Path (Split-Path $AgentLocalFolder -Parent) "update_checks.ps1"
+$UpdaterTask = "Checkmk_Auto_Update"
+Write-Host "[-] Memasang auto-update script dari GitHub..." -ForegroundColor Yellow
+try {
+    Invoke-WebRequest -Uri "$BaseUrl/update_checks.ps1" -OutFile $UpdaterPath -UseBasicParsing
+    $UpdAction   = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$UpdaterPath`" -GithubUser $GithubUser -GithubRepo $GithubRepo -Branch $Branch"
+    $UpdTriggers = @(
+        (New-ScheduledTaskTrigger -AtStartup),
+        (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 4) -RepetitionDuration (New-TimeSpan -Days 3650))
+    )
+    $UpdSettings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+    $UpdPrincipal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    if (Get-ScheduledTask -TaskName $UpdaterTask -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $UpdaterTask -Confirm:$false | Out-Null
+    }
+    Register-ScheduledTask -TaskName $UpdaterTask -Action $UpdAction -Trigger $UpdTriggers -Settings $UpdSettings -Principal $UpdPrincipal | Out-Null
+    Write-Host " -> [OK] Task '$UpdaterTask' terdaftar (tiap 4 jam + saat startup)" -ForegroundColor Green
+} catch {
+    Write-Warning "Gagal memasang auto-update: $_"
+}
+
+# 7a-2. Pasang CrystalDiskInfo otomatis (untuk disk yang tidak terbaca smartctl)
+# Mengunduh setup_crystaldiskinfo.ps1 lalu menjalankannya (proses terpisah agar 'exit' di dalamnya tidak menghentikan installer).
+$CdiSetupPath = Join-Path (Split-Path $AgentLocalFolder -Parent) "setup_crystaldiskinfo.ps1"
+Write-Host "[-] Menyiapkan CrystalDiskInfo (pengecekan tiap 6 jam)..." -ForegroundColor Yellow
+try {
+    Invoke-WebRequest -Uri "$BaseUrl/setup_crystaldiskinfo.ps1" -OutFile $CdiSetupPath -UseBasicParsing
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $CdiSetupPath
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host " -> [OK] CrystalDiskInfo siap" -ForegroundColor Green
+    } else {
+        Write-Warning "Setup CrystalDiskInfo belum berhasil (lihat pesan di atas). Bagian lain tetap terpasang."
+    }
+} catch {
+    Write-Warning "Gagal mengunduh/menjalankan setup_crystaldiskinfo.ps1: $_"
+}
+
 # 7b. Pasang plugin mk_inventory (HW/SW Inventory)
 # File mk_inventory.ps1 ada di folder GitHub yang sama dengan local checks (local_checks),
 # tetapi HARUS dipasang di folder PLUGINS agent, bukan folder local.
