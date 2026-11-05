@@ -51,6 +51,10 @@ function Get-OfficeProductName {
 
     $year = ''
     if ($s -match '(2010|2013|2016|2019|2021|2024)') { $year = $Matches[1] }
+    # Office 2016 dan lama: nama lisensi tidak memuat tahun (mis. Office16Excel...), pakai kode versi
+    if (-not $year -and $Raw -match 'Office\s?(14|15|16|19|21|24)') {
+        $year = @{ '14' = '2010'; '15' = '2013'; '16' = '2016'; '19' = '2019'; '21' = '2021'; '24' = '2024' }[$Matches[1]]
+    }
     $ltsc = ($s -match 'LTSC') -or ($year -eq '2024' -and $s -match 'VL')
 
     $name = $null
