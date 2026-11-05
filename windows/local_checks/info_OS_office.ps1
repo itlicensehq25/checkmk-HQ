@@ -1,8 +1,20 @@
 # =====================================================================
-# Local Check Checkmk: Daily OS & Multi-Office Suite License Check (Windows)
-# Scheduled to run once a day at 16:00
+# Local Check Checkmk: Daily OS & Office License Check (Windows)
+# Service: Info_OS dan Info_Office
+# Dijalankan sekali sehari setelah pukul 16:00 (atau langsung jika file
+# script ini lebih baru dari cache, mis. setelah diperbarui dari GitHub).
+#
+# Format Info_Office:
+#   1 office : <versi office> - Licensed/Tidak Licensed - <serial>
+#   >1 office: <office 1> - Licensed - <serial 1> + <office 2> - Licensed - <serial 2>
+# Setiap produk (Excel, Word, dst.) mendapat serialnya sendiri.
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
+
+# ---------- Pengaturan ----------
+$WarnIfUnlicensed = $false   # true = Info_Office jadi WARNING jika ada office yang Tidak Licensed
+# --------------------------------
+
 $CacheDir = "$env:ProgramData\checkmk\agent\cache"
 if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force $CacheDir | Out-Null }
 $CacheFile = Join-Path $CacheDir "cache_os_office.txt"
@@ -10,23 +22,75 @@ $CacheFile = Join-Path $CacheDir "cache_os_office.txt"
 # Logika Penjadwalan: Eksekusi Baru Setiap Hari Setelah Pukul 16:00
 $Now = Get-Date
 $Today16 = Get-Date -Hour 16 -Minute 0 -Second 0
-if ($Now -lt $Today16) {
-    $Last16 = $Today16.AddDays(-1)
-} else {
-    $Last16 = $Today16
-}
+if ($Now -lt $Today16) { $Last16 = $Today16.AddDays(-1) } else { $Last16 = $Today16 }
 
 $NeedUpdate = $true
 if (Test-Path $CacheFile) {
     $CacheMtime = (Get-Item $CacheFile).LastWriteTime
-    if ($CacheMtime -ge $Last16) {
-        $NeedUpdate = $false
+
+    # Jalankan ulang juga jika file script ini lebih baru dari cache (script diperbarui)
+    $ScriptNewer = $false
+    $ScriptPath = $MyInvocation.MyCommand.Path
+    if ($ScriptPath -and (Test-Path $ScriptPath)) {
+        if ((Get-Item $ScriptPath).LastWriteTime -gt $CacheMtime) { $ScriptNewer = $true }
     }
+
+    if ($CacheMtime -ge $Last16 -and -not $ScriptNewer) { $NeedUpdate = $false }
+}
+
+# ---------------------------------------------------------------------
+# Fungsi bantu Office
+# ---------------------------------------------------------------------
+# Ubah nama lisensi/SKU (mis. "Office 21, Office21Excel2021R_Retail edition")
+# menjadi nama yang mudah dibaca (mis. "Microsoft Excel 2021").
+function Get-OfficeProductName {
+    param([string]$Raw)
+    $s = $Raw
+    if ($s -match ',') { $s = $s.Substring($s.LastIndexOf(',') + 1) }
+    $s = ($s -replace '(?i)\s*edition\s*$', '').Trim()
+
+    $year = ''
+    if ($s -match '(2010|2013|2016|2019|2021|2024)') { $year = $Matches[1] }
+    $ltsc = ($s -match 'LTSC') -or ($year -eq '2024' -and $s -match 'VL')
+
+    $name = $null
+    foreach ($app in @('Excel', 'Word', 'PowerPoint', 'Outlook', 'Access', 'Publisher', 'OneNote', 'Visio', 'Project')) {
+        if ($s -match $app) { $name = "Microsoft $app"; break }
+    }
+    if (-not $name) {
+        if     ($s -match 'O365|Mondo365|Subscription|M365') { $name = 'Microsoft 365 Apps'; $year = '' }
+        elseif ($s -match 'ProPlus')                         { $name = 'Microsoft Office Professional Plus' }
+        elseif ($s -match 'Standard')                        { $name = 'Microsoft Office Standard' }
+        elseif ($s -match 'HomeBusiness|HomeBus')            { $name = 'Microsoft Office Home & Business' }
+        elseif ($s -match 'HomeStudent')                     { $name = 'Microsoft Office Home & Student' }
+        elseif ($s -match 'Professional')                    { $name = 'Microsoft Office Professional' }
+        else                                                 { $name = "Microsoft Office ($s)" }
+    }
+    $full = $name
+    if ($year) { $full += " $year" }
+    if ($ltsc) { $full += ' LTSC' }
+    return $full
+}
+
+# Tambah satu produk Office ke daftar (tanpa duplikat nama+serial)
+function Add-OfficeEntry {
+    param([string]$Raw, [string]$Status, [string]$Key, [string]$Name)
+    if (-not $Name) { $Name = Get-OfficeProductName -Raw $Raw }
+    if (-not $Key) { $Key = '' }
+    foreach ($e in $script:Entries) {
+        if ($e.Name -eq $Name -and $e.Key -eq $Key) { return }
+    }
+    $st = ''
+    $s = ($Status -replace '-', '').Trim().ToUpper()
+    if ($s -eq 'LICENSED') { $st = 'Licensed' }
+    elseif ($s) { $st = 'Tidak Licensed' }
+    else { $st = 'Status tidak terbaca' }
+    $script:Entries.Add([pscustomobject]@{ Name = $Name; Status = $st; Key = $Key })
 }
 
 if ($NeedUpdate) {
     $Lines = [System.Collections.Generic.List[string]]::new()
-    
+
     # =================================================================
     # 1. PENGECEKAN WINDOWS OS (Info_OS)
     # =================================================================
@@ -62,12 +126,12 @@ if ($NeedUpdate) {
 
         $WinCheckStatus = 0
         $WinState = "OK"
-        if ($WinStatus -match "Licensed") { 
-            $WinCheckStatus = 0; $WinState = "OK" 
-        } elseif ($WinStatus -match "Unknown") { 
-            $WinCheckStatus = 0; $WinState = "OK" 
-        } else { 
-            $WinCheckStatus = 2; $WinState = "CRITICAL" 
+        if ($WinStatus -match "Licensed") {
+            $WinCheckStatus = 0; $WinState = "OK"
+        } elseif ($WinStatus -match "Unknown") {
+            $WinCheckStatus = 0; $WinState = "OK"
+        } else {
+            $WinCheckStatus = 2; $WinState = "CRITICAL"
         }
 
         $Lines.Add("$WinCheckStatus `"Info_OS`" - $WinState - OS: $WinName | Version: $WinVersionName | Arch: $WinArch | Build: $WinBuild | License: $WinStatus | Key: $WinKey")
@@ -76,95 +140,13 @@ if ($NeedUpdate) {
     }
 
     # =================================================================
-    # 2. PENGECEKAN MULTI-OFFICE & STANDALONE (Info_Office)
+    # 2. PENGECEKAN OFFICE (Info_Office) - satu serial per produk
     # =================================================================
     try {
-        $OfficeList = [System.Collections.Generic.List[string]]::new()
-        $OtherList  = [System.Collections.Generic.List[string]]::new()
+        $script:Entries = [System.Collections.Generic.List[object]]::new()
+        $Others = [System.Collections.Generic.List[string]]::new()
 
-        # A. Deteksi Click-to-Run (C2R) Apps & Suites
-        $CtrPath = "HKLM:\Software\Microsoft\Office\ClickToRun\Configuration"
-        if (Test-Path $CtrPath) {
-            $ReleaseIDs = Get-ItemPropertyValue -Path $CtrPath -Name "ProductReleaseIDs" -ErrorAction SilentlyContinue
-            $VerReport  = Get-ItemPropertyValue -Path $CtrPath -Name "VersionToReport" -ErrorAction SilentlyContinue
-            if ($ReleaseIDs) {
-                $c2rItems = $ReleaseIDs -split ","
-                foreach ($item in $c2rItems) {
-                    $cleanItem = $item.Trim()
-                    # Menambahkan break pada tiap cabang switch untuk mencegah duplikasi output array
-                    $label = switch -Wildcard ($cleanItem) {
-                        "*O365*"         { "Microsoft 365"; break }
-                        "*ProPlus2024*" { "Office Pro Plus 2024"; break }
-                        "*ProPlus2021*" { "Office Pro Plus 2021"; break }
-                        "*ProPlus2019*" { "Office Pro Plus 2019"; break }
-                        "*ProPlus2016*" { "Office Pro Plus 2016"; break }
-                        "*Excel2024*"   { "Microsoft Excel 2024 LTSC"; break }
-                        "*ExcelLTSC*"   { "Microsoft Excel 2024 LTSC"; break }
-                        "*Excel2021*"   { "Microsoft Excel 2021"; break }
-                        "*Excel2019*"   { "Microsoft Excel 2019"; break }
-                        "*Excel2016*"   { "Microsoft Excel 2016"; break }
-                        "*Excel*"       { "Microsoft Excel 2024 LTSC"; break }
-                        "*Word*"        { "Microsoft Word (Standalone)"; break }
-                        "*Visio*"       { "Microsoft Visio"; break }
-                        "*Project*"     { "Microsoft Project"; break }
-                        default         { $cleanItem; break }
-                    }
-
-                    if ($label -is [array]) { $label = $label[0] }
-                    $c2rTag = if ($VerReport) { "$label (v$VerReport)" } else { $label }
-                    if (-not $OfficeList.Contains($c2rTag)) { $OfficeList.Add($c2rTag) }
-                }
-            }
-        }
-
-        # B. Pindai Registry Uninstall (MSI & Alternatif) + Anti-Duplikasi
-        $RegPaths = @(
-            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        )
-        $InstalledApps = Get-ItemProperty $RegPaths -ErrorAction SilentlyContinue
-        $ExcludePattern = "MUI|Proof|Filter|Tools|Component|Update|Pack|Telemetry|Teams|Licensing|Primary Interop|Visual Studio|Add-in|Language|Service Pack|Help|Outils|Herramientas|Correcci|Vérification|Verificacion"
-
-        foreach ($app in $InstalledApps) {
-            $dn = $app.DisplayName
-            $dv = $app.DisplayVersion
-            if (-not $dn) { continue }
-
-            if ($dn -match "^Microsoft\s+(Office|Excel|Word|PowerPoint|Access|Outlook|Publisher|Visio|Project)" -and 
-                $dn -notmatch $ExcludePattern) {
-                
-                $cleanName = ($dn -replace '\s*-\s*[a-z]{2}-[a-z]{2}$', '').Trim()
-                if ($cleanName -match "Excel LTSC") { $cleanName = "Microsoft Excel 2024 LTSC" }
-                $itemWithVer = if ($dv) { "$cleanName (v$dv)" } else { $cleanName }
-                
-                # Cegah duplikasi jika sudah terdeteksi di langkah Click-to-Run
-                $exists = $false
-                foreach ($known in $OfficeList) {
-                    if ($known -like "*$cleanName*" -or ($known -like "*Excel*" -and $cleanName -like "*Excel*")) { 
-                        $exists = $true
-                        break 
-                    }
-                }
-                if (-not $exists) { $OfficeList.Add($itemWithVer) }
-            }
-            elseif ($dn -match "^LibreOffice") {
-                # Cegah pengulangan jika DisplayName sudah memuat nomor versi
-                if ($dv -and ($dn -notmatch [regex]::Escape($dv))) {
-                    $lo = "$dn $dv"
-                } else {
-                    $lo = $dn
-                }
-                if (-not ($OtherList | Where-Object { $_ -like "*LibreOffice*" })) { $OtherList.Add($lo.Trim()) }
-            }
-            elseif ($dn -match "WPS Office" -and $dn -notmatch $ExcludePattern) {
-                $wps = if ($dv -and ($dn -notmatch [regex]::Escape($dv))) { "WPS Office v$dv" } else { $dn }
-                if (-not ($OtherList | Where-Object { $_ -like "*WPS Office*" })) { $OtherList.Add($wps.Trim()) }
-            }
-        }
-        
-        # C. Pindai Lisensi OSPP.VBS
-        $AllLicenses = [System.Collections.Generic.List[string]]::new()
+        # A. Baca SEMUA lisensi dari OSPP.VBS (tiap produk = 1 blok LICENSE NAME)
         $VbsSearchPaths = @(
             "$env:ProgramFiles\Microsoft Office\Office14\OSPP.VBS",
             "${env:ProgramFiles(x86)}\Microsoft Office\Office14\OSPP.VBS",
@@ -176,80 +158,100 @@ if ($NeedUpdate) {
 
         foreach ($vPath in $VbsSearchPaths) {
             $CscriptOut = cscript.exe //nologo "$vPath" /dstatus 2>$null
-            $currentStatus = ""
-            $currentKey = ""
-
+            $cur = $null
             foreach ($line in $CscriptOut) {
-                if ($line -match "LICENSE STATUS:\s*---(.*?)---") {
-                    $currentStatus = $Matches[1].Trim()
-                } elseif ($line -match "LICENSE STATUS:\s*(.*)") {
-                    $currentStatus = $Matches[1].Trim()
+                if ($line -match '^\s*LICENSE NAME:\s*(.+)$') {
+                    if ($cur) { Add-OfficeEntry -Raw $cur.Raw -Status $cur.Status -Key $cur.Key }
+                    $cur = @{ Raw = $Matches[1].Trim(); Status = ''; Key = '' }
                 }
+                elseif ($cur -and $line -match '^\s*LICENSE STATUS:\s*(.+)$') {
+                    $cur.Status = $Matches[1].Trim()
+                }
+                elseif ($cur -and $line -match 'Last 5 characters of installed product key:\s*(\S+)') {
+                    $cur.Key = $Matches[1].Trim()
+                    Add-OfficeEntry -Raw $cur.Raw -Status $cur.Status -Key $cur.Key
+                    $cur = $null
+                }
+            }
+            if ($cur) { Add-OfficeEntry -Raw $cur.Raw -Status $cur.Status -Key $cur.Key }
+        }
 
-                if ($line -match "Last 5 characters of installed product key:\s*(.*)") {
-                    $currentKey = $Matches[1].Trim()
-                    if ($currentStatus) {
-                        $licEntry = "$currentStatus (Key: $currentKey)"
-                        if (-not $AllLicenses.Contains($licEntry)) {
-                            $AllLicenses.Add($licEntry)
-                        }
-                        $currentStatus = ""
-                        $currentKey = ""
+        # B. Cadangan: jika OSPP tidak memberi hasil, baca dari layanan lisensi Windows
+        if ($script:Entries.Count -eq 0) {
+            $wmi = Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "ApplicationId='0ff1ce15-a989-479d-af46-f275c6370663' AND PartialProductKey IS NOT NULL"
+            foreach ($p in $wmi) {
+                $stText = 'UNLICENSED'
+                if ($p.LicenseStatus -eq 1) { $stText = 'LICENSED' }
+                Add-OfficeEntry -Raw $p.Name -Status $stText -Key $p.PartialProductKey
+            }
+        }
+
+        # C. Cadangan terakhir: Click-to-Run terpasang tapi lisensi tidak terbaca
+        if ($script:Entries.Count -eq 0) {
+            $CtrPath = "HKLM:\Software\Microsoft\Office\ClickToRun\Configuration"
+            if (Test-Path $CtrPath) {
+                $ReleaseIDs = Get-ItemPropertyValue -Path $CtrPath -Name "ProductReleaseIDs" -ErrorAction SilentlyContinue
+                if ($ReleaseIDs) {
+                    foreach ($id in ($ReleaseIDs -split ',')) {
+                        if ($id.Trim()) { Add-OfficeEntry -Raw $id.Trim() -Status '' -Key '' }
                     }
                 }
             }
         }
 
-        # D. Format Output Akhir Checkmk
-        # Format yang diinginkan:
-        # OK - Product: Microsoft Excel 2024 LTSC (v16.x) LICENSED | ❘ License: (Key: XXXXX) + LibreOffice x.x.x.x
+        # D. Aplikasi non-Microsoft (LibreOffice / WPS) dan Office MSI (cadangan)
+        $RegPaths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+        $InstalledApps = Get-ItemProperty $RegPaths -ErrorAction SilentlyContinue
+        $ExcludePattern = "MUI|Proof|Filter|Tools|Component|Update|Pack|Telemetry|Teams|Licensing|Primary Interop|Visual Studio|Add-in|Language|Service Pack|Help|Outils|Herramientas|Correcci|Verification|Verificacion"
 
-        if ($OfficeList.Count -gt 0 -or $OtherList.Count -gt 0) {
-            $MicrosoftProductString = if ($OfficeList.Count -gt 0) { $OfficeList -join " + " } else { "" }
-            $OtherProductString = if ($OtherList.Count -gt 0) { $OtherList -join " + " } else { "" }
+        foreach ($app in $InstalledApps) {
+            $dn = $app.DisplayName
+            $dv = $app.DisplayVersion
+            if (-not $dn) { continue }
 
-            # Ambil status lisensi dan key pertama yang ditemukan dari OSPP.VBS
-            $LicenseStatusText = "N/A"
-            $LicenseKeyText = ""
-
-            if ($AllLicenses.Count -gt 0) {
-                $FirstLicense = $AllLicenses[0]
-                if ($FirstLicense -match '^(.+?)\s+\(Key:\s*(.+?)\)$') {
-                    $LicenseStatusText = $Matches[1].Trim()
-                    $LicenseKeyText = $Matches[2].Trim()
-                } else {
-                    $LicenseStatusText = $FirstLicense.Trim()
-                }
+            if ($dn -match "^LibreOffice") {
+                $lo = $dn
+                if ($dv -and ($dn -notmatch [regex]::Escape($dv))) { $lo = "$dn $dv" }
+                if (-not ($Others | Where-Object { $_ -like "*LibreOffice*" })) { $Others.Add($lo.Trim()) }
             }
-
-            # Susun summary sesuai format tampilan yang diminta
-            if ($MicrosoftProductString) {
-                $Summary = "0 `"Info_Office`" - OK - Product: $MicrosoftProductString"
-
-                if ($LicenseStatusText -and $LicenseStatusText -ne "N/A") {
-                    $Summary += " $LicenseStatusText"
-                }
-
-                $Summary += " | ❘ License:"
-
-                if ($LicenseKeyText) {
-                    $Summary += " (Key: $LicenseKeyText)"
-                }
-
-                if ($OtherProductString) {
-                    $Summary += " + $OtherProductString"
-                }
-
-                $Lines.Add($Summary)
-            } else {
-                # Jika hanya LibreOffice/WPS yang terpasang
-                $Lines.Add("0 `"Info_Office`" - OK - Product: $OtherProductString | ❘ License: N/A")
+            elseif ($dn -match "WPS Office" -and $dn -notmatch $ExcludePattern) {
+                $wps = $dn
+                if ($dv -and ($dn -notmatch [regex]::Escape($dv))) { $wps = "WPS Office v$dv" }
+                if (-not ($Others | Where-Object { $_ -like "*WPS Office*" })) { $Others.Add($wps.Trim()) }
             }
+            elseif ($script:Entries.Count -eq 0 -and
+                    $dn -match "^Microsoft\s+(Office|Excel|Word|PowerPoint|Access|Outlook|Publisher|Visio|Project)" -and
+                    $dn -notmatch $ExcludePattern) {
+                $clean = ($dn -replace '\s*-\s*[a-z]{2}-[a-z]{2}$', '').Trim()
+                Add-OfficeEntry -Raw $clean -Status '' -Key '' -Name $clean
+            }
+        }
+
+        # E. Susun output: "<office> - <status> - <serial> + <office> - <status> - <serial>"
+        $Parts = [System.Collections.Generic.List[string]]::new()
+        $AnyUnlicensed = $false
+        foreach ($e in ($script:Entries | Sort-Object Name, Key)) {
+            $keyText = '-'
+            if ($e.Key) { $keyText = $e.Key }
+            if ($e.Status -eq 'Tidak Licensed') { $AnyUnlicensed = $true }
+            $Parts.Add("$($e.Name) - $($e.Status) - $keyText")
+        }
+        foreach ($o in $Others) { $Parts.Add($o) }
+
+        $OfficeState = 0
+        if ($WarnIfUnlicensed -and $AnyUnlicensed) { $OfficeState = 1 }
+
+        if ($Parts.Count -gt 0) {
+            $Lines.Add("$OfficeState `"Info_Office`" - " + ($Parts -join ' + '))
         } else {
-            $Lines.Add("0 `"Info_Office`" - OK - Product: Tidak ada aplikasi Office (Native Windows) | Status: OK")
+            $Lines.Add("0 `"Info_Office`" - Tidak ada aplikasi Office terpasang")
         }
     } catch {
-        $Lines.Add("0 `"Info_Office`" - OK - Product: Microsoft Office | Status: Error checking registry")
+        $Lines.Add("0 `"Info_Office`" - Gagal membaca data Office")
     }
 
     # Simpan hasil pemindaian ke file cache
